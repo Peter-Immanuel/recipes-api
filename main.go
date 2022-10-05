@@ -1,7 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -26,8 +29,8 @@ var recipes []Recipe
 
 func init() {
 	recipes = make([]Recipe, 0)
-	// file, _ := os.ReadFile("recipes.json")
-	// _ = json.Unmarshal(file, &recipes)
+	file, _ := os.ReadFile("recipes.json")
+	_ = json.Unmarshal(file, &recipes)
 }
 
 func NewRecipeHandler(c *gin.Context) {
@@ -49,8 +52,8 @@ func ListRecipeHandler(c *gin.Context) {
 func UpdateRecipeHandler(c *gin.Context) {
 	id := c.Param("id")
 
-	var recipe Recipe
-	err := c.ShouldBindJSON(&recipe)
+	var newRecipe Recipe
+	err := c.ShouldBindJSON(&newRecipe)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": err.Error()})
@@ -59,7 +62,7 @@ func UpdateRecipeHandler(c *gin.Context) {
 
 	index := -1
 
-	for i := 0; i <= len(recipes); i++ {
+	for i := 0; i < len(recipes); i++ {
 		if recipes[i].ID == id {
 			index = i
 		}
@@ -70,13 +73,77 @@ func UpdateRecipeHandler(c *gin.Context) {
 			"error": "Sorry Recipe not found"})
 		return
 	}
-	c.JSON(http.StatusOK, recipes[index])
+	recipes[index] = newRecipe
+	c.JSON(http.StatusOK, newRecipe)
+}
+
+func DeleteRecipeHandler(c *gin.Context) {
+	id := c.Param("id")
+	index := -1
+
+	for i := 0; i < len(recipes); i++ {
+		if recipes[i].ID == id {
+			index = i
+		}
+	}
+
+	if index == -1 {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "Recipe not Found"})
+		return
+	}
+
+	recipes = append(recipes[:index], recipes[index+1])
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Recipe successfully deleted"})
+}
+
+func SearchRecipeHandler(c *gin.Context) {
+	searchTag := c.Query("tag")
+	resultList := make([]Recipe, 0)
+
+	for i := 0; i < len(recipes); i++ {
+		found := false
+		for _, tag := range recipes[i].Tags {
+			if strings.EqualFold(tag, searchTag) {
+				found = true
+			}
+		}
+		if found {
+			resultList = append(resultList, recipes[i])
+		}
+	}
+	c.JSON(http.StatusOK, resultList)
+}
+
+func GetSpecificRecipeHandler(c *gin.Context) {
+	id := c.Param("id")
+	found := false
+	var result Recipe
+	for i := 0; i < len(recipes); i++ {
+		if recipes[i].ID == id {
+			found = true
+			result = recipes[i]
+			break
+		}
+	}
+	if found {
+		c.JSON(http.StatusOK, result)
+		return
+	}
+	c.JSON(http.StatusNotFound, gin.H{
+		"error": "Recipe not found"})
 }
 
 func main() {
 	router := gin.Default()
-	router.POST("/recipes", NewRecipeHandler)
 	router.GET("/recipes", ListRecipeHandler)
+	router.POST("/recipes", NewRecipeHandler)
+
+	router.GET("/recipes/:id", GetSpecificRecipeHandler)
 	router.PUT("/recipes/:id", UpdateRecipeHandler)
+	router.DELETE("/recipes/:id", DeleteRecipeHandler)
+
+	router.GET("/recipes/search", SearchRecipeHandler)
 	router.Run()
 }
