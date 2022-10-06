@@ -1,15 +1,42 @@
+// Recipes API
+//This is a sample recipes API. You can find out more about
+//
+// Schemas: http
+// Host: localhost:8080
+// BasePath: /
+// Version: 1.0.0
+// Contact: Peter Bemshima
+//
+// Consumes:
+// 	- application/json
+//
+// Produces:
+// 	- application/json
+//
+// Swagger:meta
 package main
 
 import (
-	"encoding/json"
+	"context"
+	"log"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/joho/godotenv"
 	"github.com/rs/xid"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/mongo/readpref"
 )
+
+// Global variable
+
+var ctx context.Context
+var err error
+var client *mongo.Client
 
 type Recipe struct {
 	ID           string    `json:"id"`
@@ -28,9 +55,25 @@ func (r *Recipe) setUp() {
 var recipes []Recipe
 
 func init() {
-	recipes = make([]Recipe, 0)
-	file, _ := os.ReadFile("recipes.json")
-	_ = json.Unmarshal(file, &recipes)
+
+	// Check for .env file
+	if err := godotenv.Load(); err != nil {
+		log.Println("No .env file found")
+	}
+
+	// collect database uri including checks
+	dbUri := os.Getenv("MONGODB_URI")
+	if dbUri == "" {
+		log.Fatal("Database connection string cannot be empty.")
+	}
+
+	ctx = context.Background()
+	client, err = mongo.Connect(ctx, options.Client().ApplyURI(dbUri))
+
+	if err = client.Ping(context.TODO(), readpref.Primary()); err != nil {
+		log.Fatal(err)
+	}
+	log.Println("Connected to MongoDB Instance")
 }
 
 func NewRecipeHandler(c *gin.Context) {
