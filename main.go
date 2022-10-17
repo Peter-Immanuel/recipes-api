@@ -19,98 +19,54 @@ package main
 import (
 	"context"
 	"log"
-	"net/http"
 	"os"
-	"strings"
-	"time"
+	"recipe-microservice/handlers"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
-	"github.com/rs/xid"
-	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
 )
 
 // Global variable
-
-var ctx context.Context
-var err error
-var client *mongo.Client
-
-type Recipe struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name`
-	Tags         []string  `json:"tags`
-	Ingredients  []string  `json:"ingredients`
-	Instructions []string  `json:"instructions"`
-	PublishedAt  time.Time `json:"publishedAt`
-}
-
-func (r *Recipe) setUp() {
-	r.ID = xid.New().String()
-	r.PublishedAt = time.Now()
-}
-
-var recipes []Recipe
+var recipeHandler *handlers.RecipeHandler
 
 func init() {
-
 	// Check for .env file
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found")
 	}
 
-	// collect database uri including checks
+	// Check for database URI
 	dbUri := os.Getenv("MONGODB_URI")
 	if dbUri == "" {
 		log.Fatal("Database connection string cannot be empty.")
 	}
 
-	ctx = context.Background()
-	client, err = mongo.Connect(ctx, options.Client().ApplyURI(dbUri))
+	// Create a context to use when querying mongodb instance
+	ctx := context.Background()
+
+	// Create the mongoDB Client to use in creating a handler
+	client, err := mongo.Connect(ctx, options.Client().ApplyURI(dbUri))
 
 	if err = client.Ping(context.TODO(), readpref.Primary()); err != nil {
 		log.Fatal(err)
 	}
 	log.Println("Connected to MongoDB Instance")
+
+	collection := client.Database("demo").Collection("recipes")
+
+	recipeHandler = handlers.NewRecipeHandler(ctx, collection)
+
 }
 
-func NewRecipeHandler(c *gin.Context) {
-	var recipe Recipe
-	if err := c.ShouldBindJSON(&recipe); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": err.Error()})
-		return
-	}
-	recipe.setUp()
-	recipes = append(recipes, recipe)
-	c.JSON(http.StatusOK, recipe)
-}
+/*
 
-func ListRecipeHandler(c *gin.Context) {
-	collection := client.Database(os.Getenv("MONOGO_DATABASE")).Collection("recipes")
-
-	cur, err := collection.Find(ctx, bson.M{})
-	if err != nil {
-		c.JSON(http.StatusInternalServerError,
-			gin.H{"error": err.Error()})
-	}
-
-	defer cur.Close(ctx)
-
-	recipes := make([]Recipe, 0)
-	for cur.Next(ctx) {
-		var recipe Recipe
-		cur.Decode(&recipe)
-		recipes = append(recipes, recipe)
-	}
-	c.JSON(http.StatusOK, recipes)
-}
 
 func UpdateRecipeHandler(c *gin.Context) {
-	id := c.Param("id")
+	collection := client.Database("demo").Collection("recipes")
+	id, _ := primitive.ObjectIDFromHex(c.Param("id"))
 
 	var newRecipe Recipe
 	err := c.ShouldBindJSON(&newRecipe)
@@ -119,22 +75,24 @@ func UpdateRecipeHandler(c *gin.Context) {
 			"error": err.Error()})
 		return
 	}
+	filter := bson.D{{"_id", id}}
+	newValue := bson.D{{"$set", bson.D{
+		{"name", newRecipe.Name},
+		{"nags", newRecipe.Tags},
+		{"ingredients", newRecipe.Ingredients},
+		{"instructions", newRecipe.Instructions},
+	}}}
 
-	index := -1
-
-	for i := 0; i < len(recipes); i++ {
-		if recipes[i].ID == id {
-			index = i
-		}
-	}
-
-	if index == -1 {
-		c.JSON(http.StatusNotFound, gin.H{
-			"error": "Sorry Recipe not found"})
+	result, err := collection.UpdateOne(ctx, filter, newValue)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error()})
 		return
 	}
-	recipes[index] = newRecipe
-	c.JSON(http.StatusOK, newRecipe)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": result,
+	})
 }
 
 func DeleteRecipeHandler(c *gin.Context) {
@@ -177,33 +135,34 @@ func SearchRecipeHandler(c *gin.Context) {
 }
 
 func GetSpecificRecipeHandler(c *gin.Context) {
-	id := c.Param("id")
-	found := false
-	var result Recipe
-	for i := 0; i < len(recipes); i++ {
-		if recipes[i].ID == id {
-			found = true
-			result = recipes[i]
-			break
-		}
-	}
-	if found {
-		c.JSON(http.StatusOK, result)
+	id, _ := primitive.ObjectIDFromHex(c.Param("id"))
+
+	filter := bson.D{{"_id", id}}
+	collection := RecipesCollection()
+
+	recipe := collection.FindOne(ctx, filter)
+
+	fmt.Println()
+	fmt.Println(recipe.Err())
+	fmt.Println()
+
+	if recipe == nil {
+		c.IndentedJSON(http.StatusNotFound, gin.H{"error": "Sorry Resource Not found"})
 		return
 	}
-	c.JSON(http.StatusNotFound, gin.H{
-		"error": "Recipe not found"})
+	c.IndentedJSON(http.StatusOK, recipe)
+	return
 }
-
+*/
 func main() {
 	router := gin.Default()
-	router.GET("/recipes", ListRecipeHandler)
-	router.POST("/recipes", NewRecipeHandler)
+	router.GET("/recipes", recipeHandler.ListRecipesHandler)
+	router.POST("/recipes", recipeHandler.CreateRecipeHandler)
 
-	router.GET("/recipes/:id", GetSpecificRecipeHandler)
-	router.PUT("/recipes/:id", UpdateRecipeHandler)
-	router.DELETE("/recipes/:id", DeleteRecipeHandler)
+	router.GET("/recipes/:id", recipeHandler.GetRecipeByIDHandler)
+	//router.PATCH("/recipes/:id", UpdateRecipeHandler)
+	// router.DELETE("/recipes/:id", DeleteRecipeHandler)
 
-	router.GET("/recipes/search", SearchRecipeHandler)
+	router.GET("/recipes/search", recipeHandler.SearchRecipeHandler)
 	router.Run()
 }
